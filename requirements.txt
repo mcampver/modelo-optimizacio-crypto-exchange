@@ -1,0 +1,9 @@
+numpy
+pandas
+pulp
+requests
+plotly
+matplotlib
+praw
+nltk
+tabulate
