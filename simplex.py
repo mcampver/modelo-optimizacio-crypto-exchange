@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from typing import List, Dict
 import time
-
+import scipy.optimize as opt
 import praw
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import nltk
@@ -202,59 +202,66 @@ class CryptoPortfolioOptimizer:
     def optimize_portfolio(self, min_weight: float = 0.0, max_weight: float = 1.0, method: str = 'max_return') -> Dict:
         if not self.available_cryptos:
             raise ValueError("No hay datos disponibles para optimizar")
-        
+
+        # Cálculo de retornos esperados anuales (asumiendo 252 días hábiles)
         exp_returns = self.returns.mean() * 252
-        
-        # Integrar análisis adicional: ajustar retornos esperados según sentimiento (por ejemplo)
-        # Esta es una idea de cómo podrías modificar los retornos
-        # Si el sentimiento es positivo, podrías aumentar levemente la expectativa
-        # Nota: El factor de ajuste es arbitrario y debe calibrarse
+
+        # Ajuste de los retornos con análisis de sentimiento y datos fundamentales
         adjustment_factor = 0.05  # 5% de ajuste por cada punto de sentimiento
-        # Primero, si aún no se han obtenido los análisis adicionales, se pueden cargar
         if not self.sentiment_scores or not self.fundamental_data:
             self.integrate_additional_analysis()
-        
+
         adjusted_exp_returns = exp_returns.copy()
         for crypto in self.available_cryptos:
             sentiment = self.sentiment_scores.get(crypto, 0)
-            # Por ejemplo, si el sentimiento es 0.2, aumentar la expectativa en un 1% (0.2*0.05)
+            # Ajuste según sentimiento
             adjusted_exp_returns[crypto] = exp_returns[crypto] * (1 + adjustment_factor * sentiment)
-            # Además, podrías usar datos fundamentales para ajustar la asignación
-            # Por ejemplo, reducir la asignación si el market_cap es muy bajo (indicativo de mayor volatilidad)
+            # Ajuste según datos fundamentales (por ejemplo, si el market_cap es bajo, se reduce la expectativa)
             fundamental = self.fundamental_data.get(crypto, {})
             market_cap = fundamental.get('market_cap', None)
             if market_cap is not None and market_cap < 1e8:  # Umbral arbitrario
                 adjusted_exp_returns[crypto] *= 0.95  # Reducción del 5%
-        
-        # Definir el problema de optimización (por defecto, maximización de retorno ajustado)
-        prob = pulp.LpProblem('Portfolio_Optimization', pulp.LpMaximize)
-    
-        weights = pulp.LpVariable.dicts("weights", 
-                                        self.available_cryptos,
-                                        lowBound=min_weight,
-                                        upBound=max_weight)
-    
-        portfolio_return = pulp.lpSum([weights[s] * adjusted_exp_returns[s] for s in self.available_cryptos])
-        prob += portfolio_return
-    
-        # Restricción: la suma de pesos debe ser 1
-        prob += pulp.lpSum([weights[s] for s in self.available_cryptos]) == 1
-    
-        prob.solve()
-    
-        self.optimal_weights = {s: pulp.value(weights[s]) for s in self.available_cryptos}
-        self.expected_return = pulp.value(portfolio_return)
-    
-        cov_matrix = self.returns.cov() * 252
-        if cov_matrix.empty:
-            self.portfolio_risk = None
+
+        # Preparar datos para la optimización
+        assets = self.available_cryptos
+        n = len(assets)
+        returns_array = np.array([adjusted_exp_returns[asset] for asset in assets])
+        cov_matrix_df = self.returns.cov() * 252
+        # Asegurarse de que la matriz de covarianza incluya solo los activos disponibles
+        cov_matrix = cov_matrix_df.loc[assets, assets].to_numpy()
+
+        # Restricción: la suma de los pesos debe ser 1
+        constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1})
+        # Límites: cada peso entre min_weight y max_weight
+        bounds = [(min_weight, max_weight) for _ in range(n)]
+        # Pesos iniciales: asignación equitativa
+        initial_weights = np.ones(n) / n
+
+        # Definir la función objetivo según el método seleccionado
+        if method == "max_return":
+            # Maximizar el retorno esperado => minimizar el negativo del retorno
+            objective = lambda w: -np.dot(w, returns_array)
+        elif method == "min_variance":
+            # Minimizar la varianza del portafolio
+            objective = lambda w: np.dot(w, cov_matrix @ w)
+        elif method == "max_sharpe":
+            # Maximizar el ratio de Sharpe (asumimos tasa libre de riesgo = 0)
+            # Se minimiza el negativo del ratio de Sharpe
+            # Se agrega una constante pequeña para evitar división por cero.
+            objective = lambda w: - (np.dot(w, returns_array)) / np.sqrt(np.dot(w, cov_matrix @ w) + 1e-10)
         else:
-            self.portfolio_risk = np.sqrt(
-                sum(self.optimal_weights[i] * self.optimal_weights[j] * cov_matrix.loc[i,j]
-                    for i in self.available_cryptos
-                    for j in self.available_cryptos)
-            )
-    
+            raise ValueError("Método no reconocido. Usa 'max_return', 'min_variance' o 'max_sharpe'.")
+
+        # Resolver la optimización con SLSQP
+        result = opt.minimize(objective, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
+        if not result.success:
+            raise ValueError("Optimización fallida: " + result.message)
+
+        optimal_weights = result.x
+        self.optimal_weights = {asset: weight for asset, weight in zip(assets, optimal_weights)}
+        self.expected_return = np.dot(optimal_weights, returns_array)
+        self.portfolio_risk = np.sqrt(np.dot(optimal_weights, cov_matrix @ optimal_weights))
+
         return {
             'weights': self.optimal_weights,
             'expected_return': self.expected_return,
@@ -262,6 +269,7 @@ class CryptoPortfolioOptimizer:
             'sentiment_scores': self.sentiment_scores,
             'fundamental_data': self.fundamental_data,
         }
+
 
     def get_invested_values(self):
      if self.optimal_weights is None:
@@ -397,6 +405,7 @@ def main():
         optimization_results = []
         
         for method in methods:
+            print(f"\nEjecutando optimización usando el método: {method}")
             result = optimizer.optimize_portfolio(min_weight=0.05, max_weight=0.4, method=method)
             optimization_results.append(result)
 
