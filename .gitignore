@@ -1,0 +1,6 @@
+# Variables de entorno y configuraciones sensibles
+.env
+src/config/keys.json
+src/data/crypto.json
+src/data
+secrets
