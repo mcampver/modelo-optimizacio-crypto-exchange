@@ -25,12 +25,22 @@ def fetch_top_cryptos(api_url="https://api.coingecko.com/api/v3/coins/markets", 
         return []
 
 # Función para guardar los datos de criptomonedas en un archivo
-def save_cryptos_to_file(filename="cryptos.json", limit=10):
+def save_cryptos_to_file(filename="src/data/cryptos.json", limit=10):
     crypto_ids = fetch_top_cryptos(limit=limit)
     
     if not crypto_ids:
         print("No se pudieron obtener criptomonedas.")
         return
+    
+    # Verificar si el archivo ya existe
+    if os.path.exists(filename):
+        respuesta = input(f"El archivo {filename} ya existe. ¿Deseas sobrescribirlo? (s/n): ")
+        if respuesta.lower() not in ['s', 'si']:
+            print("Operación cancelada.")
+            return
+    else:
+        # Asegurarse de que la carpeta exista
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
     
     # Guardar los IDs de las criptomonedas en un archivo JSON
     with open(filename, 'w') as f:
@@ -38,7 +48,7 @@ def save_cryptos_to_file(filename="cryptos.json", limit=10):
     print(f"Criptomonedas guardadas en {filename}")
 
 # Función para cargar criptomonedas desde el archivo
-def load_cryptos_from_file(filename="cryptos.json"):
+def load_cryptos_from_file(filename="src/data/cryptos.json"):
     if not os.path.exists(filename):
         print(f"Archivo {filename} no encontrado. Realizando la descarga de criptomonedas...")
         save_cryptos_to_file(filename=filename)
@@ -49,6 +59,8 @@ def load_cryptos_from_file(filename="cryptos.json"):
 
 # Función principal
 def main():
+    print("Directorio de trabajo actual:", os.getcwd())
+    save_cryptos_to_file()
     crypto_ids = load_cryptos_from_file()
     print(f"Criptomonedas cargadas: {crypto_ids}")
 
