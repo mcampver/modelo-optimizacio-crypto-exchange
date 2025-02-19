@@ -113,15 +113,22 @@ class CryptoPortfolioOptimizer:
         print(f"Error al obtener sentimiento para {crypto_id}: {str(e)}")
         return 0.0
 
-    def fetch_fundamental_data(self, crypto_id: str) -> Dict:
-        """
-        Función para obtener datos fundamentales de la criptomoneda.
-        Se utiliza la API de CoinGecko para extraer información como capitalización de mercado, 
-        volumen total, etc.
-        """
-        url = f"https://api.coingecko.com/api/v3/coins/{crypto_id}"
+    def fetch_fundamental_data(self, crypto_id: str, retry_delay: int = 60) -> Dict:
+     """
+     Función para obtener datos fundamentales de la criptomoneda.
+     Se utiliza la API de CoinGecko para extraer información como capitalización de mercado, 
+     volumen total, etc.
+     """
+     url = f"https://api.coingecko.com/api/v3/coins/{crypto_id}"
+     retries = 3
+     while retries > 0:
         try:
             response = requests.get(url)
+            if response.status_code == 429:
+                print(f"Límite de API alcanzado. Esperando {retry_delay} segundos...")
+                time.sleep(retry_delay)
+                retries -= 1
+                continue
             response.raise_for_status()
             data = response.json()
             fundamental_info = {
@@ -134,7 +141,11 @@ class CryptoPortfolioOptimizer:
             return fundamental_info
         except Exception as e:
             print(f"Error obteniendo datos fundamentales para {crypto_id}: {str(e)}")
-            return {}
+            retries -= 1
+            if retries > 0:
+                print(f"Reintentando... ({retries} intentos restantes)")
+                time.sleep(5)
+     return {}
 
 
     def integrate_additional_analysis(self):
